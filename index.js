@@ -174,41 +174,42 @@ function invertTarget({ element, doc, backdrop }, undo) {
 }
 
 function currentFloor() {
-    const context = globalThis.SillyTavern?.getContext();
+    const context = globalThis.SillyTavern?.getContext?.();
     const id = context?.getCurrentChatId?.() ?? context?.chatId;
     const index = (context?.chat?.length ?? 0) - 1;
     if (id == null || index < 0) return null;
-    const row = document.querySelector(`#chat > .mes[mesid="${index}"]`);
+    const chat = document.getElementById('chat');
+    const row = chat?.querySelector(`:scope > .mes[mesid="${index}"]`);
     const content = row?.querySelector('.mes_text');
     const message = context.chat[index];
     if (!content || !message) return null;
     const character = context.characters?.[context.characterId];
     const key = JSON.stringify([context.groupId, context.characterId, character?.avatar, id]);
-    return { key, index, content, message, swipe: message.swipe_id };
+    return { key, index, chat, content, message, swipe: message.swipe_id };
 }
 
 function mount() {
-    const chat = document.getElementById('chat');
-    if (!chat || document.getElementById('theater-tone')) return;
+    if (document.getElementById('theater-tone')) return;
 
-    const widget = document.createElement('div');
+    const widget = document.createElement('theater-tone-launcher');
     widget.id = 'theater-tone';
+    const shadow = widget.attachShadow({ mode: 'open' });
+    const style = document.createElement('link');
+    style.rel = 'stylesheet';
+    style.href = new URL('./launcher.css', import.meta.url).href;
     const status = document.createElement('span');
-    status.className = 'theater-tone-status';
     status.setAttribute('role', 'status');
     const button = document.createElement('button');
     button.type = 'button';
     button.setAttribute('aria-label', '切换最新楼层小剧场的亮暗色');
     button.setAttribute('aria-pressed', 'false');
-    const icon = document.createElement('span');
-    icon.className = 'theater-tone-icon';
-    icon.setAttribute('aria-hidden', 'true');
-    button.append(icon);
-    widget.append(status, button);
+    shadow.append(style, status, button);
     document.body.append(widget);
 
     let active = null;
     let timeout;
+    const observer = new MutationObserver(checkFloor);
+    const subscribedEvents = new WeakSet();
 
     function announce(message) {
         clearTimeout(timeout);
@@ -218,6 +219,7 @@ function mount() {
 
     function reset() {
         if (!active) return;
+        observer.disconnect();
         for (const restore of active.undo.reverse()) restore();
         active = null;
         delete widget.dataset.tone;
@@ -258,7 +260,9 @@ function mount() {
         const light = results.reduce((sum, target) => sum + target.lightShare * target.weight, 0);
         const total = results.reduce((sum, target) => sum + target.weight, 0);
         const wasLight = light >= total / 2;
+        subscribeToChatEvents();
         active = { floor, targets: results, undo: [] };
+        observer.observe(floor.chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['mesid', 'src', 'srcdoc'] });
         for (const target of results) {
             if ((target.lightShare >= 0.5) === wasLight) invertTarget(target, active.undo);
             if (target.doc) {
@@ -276,20 +280,20 @@ function mount() {
         announce(`已切换为${wasLight ? '暗' : '亮'}色系${unreadableFrames ? '（部分前端无法读取）' : ''}`);
     });
 
-    const observer = new MutationObserver(checkFloor);
-    observer.observe(chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['mesid', 'src', 'srcdoc'] });
-    const context = globalThis.SillyTavern?.getContext();
-    const { eventSource, eventTypes } = context ?? {};
-    if (!eventSource || !eventTypes) return;
-    for (const event of ['CHAT_CHANGED', 'MESSAGE_DELETED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED']) {
-        if (eventTypes[event]) eventSource.on(eventTypes[event], reset);
-    }
-    for (const event of ['MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED']) {
-        if (eventTypes[event]) eventSource.on(eventTypes[event], id => {
-            if (active && Number(id) === active.floor.index) reset();
-        });
+    function subscribeToChatEvents() {
+        const { eventSource, eventTypes } = globalThis.SillyTavern?.getContext?.() ?? {};
+        if (!eventSource?.on || !eventTypes || subscribedEvents.has(eventSource)) return;
+        subscribedEvents.add(eventSource);
+        for (const event of ['CHAT_CHANGED', 'MESSAGE_DELETED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED']) {
+            if (eventTypes[event]) eventSource.on(eventTypes[event], reset);
+        }
+        for (const event of ['MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED']) {
+            if (eventTypes[event]) eventSource.on(eventTypes[event], id => {
+                if (active && Number(id) === active.floor.index) reset();
+            });
+        }
     }
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
-else mount();
+if (document.body) mount();
+else document.addEventListener('DOMContentLoaded', mount, { once: true });

@@ -1,0 +1,70 @@
+:host {
+    all: initial !important;
+    display: flex !important;
+    position: fixed !important;
+    right: max(16px, calc(env(safe-area-inset-right, 0px) + 8px)) !important;
+    bottom: calc(152px + env(safe-area-inset-bottom, 0px)) !important;
+    z-index: 2147483000 !important;
+    align-items: center !important;
+    gap: 8px !important;
+    pointer-events: none !important;
+}
+
+@media (max-width: 680px), (pointer: coarse) {
+    :host {
+        bottom: calc(clamp(96px, 21vh, 172px) + env(safe-area-inset-bottom, 0px)) !important;
+        bottom: calc(clamp(96px, 21dvh, 172px) + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}
+
+button {
+    display: grid;
+    place-items: center;
+    flex: 0 0 46px;
+    width: 46px;
+    height: 46px;
+    margin: 0;
+    padding: 0;
+    border: 2px solid #f3eeff;
+    border-radius: 50%;
+    background: #a894f7;
+    color: #23193c;
+    box-shadow: 0 0 0 1px #2f2355, 0 3px 12px #0e0a1a88;
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: manipulation;
+}
+
+button::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+}
+
+:host([data-tone="light"]) button { background: #f7ebd7; }
+:host([data-tone="dark"]) button { background: #30264b; color: #f3eeff; }
+
+button:focus-visible {
+    outline: 2px solid #ead9ff;
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    button:active { transform: scale(.94); }
+}
+
+[role="status"]:empty { display: none; }
+
+[role="status"] {
+    max-width: min(15rem, calc(100vw - 90px));
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: #25283a;
+    color: #faf4e9;
+    box-shadow: 0 2px 10px #11132170;
+    font: 14px/1.4 system-ui, sans-serif;
+    overflow-wrap: anywhere;
+}
