@@ -1,8 +1,14 @@
 {
   "display_name": "小剧场换色",
   "loading_order": 100,
-  "js": "index.js",
+  "js": "theater-tone.js",
+  "css": "theater-tone.css",
   "author": "AYUUKI-K",
-  "version": "1.0.1",
-  "auto_update": false
+  "version": "1.0.2",
+  "auto_update": false,
+  "hooks": {
+    "activate": "activate",
+    "disable": "deactivate",
+    "delete": "deactivate"
+  }
 }

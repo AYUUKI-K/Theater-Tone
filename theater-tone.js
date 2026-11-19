@@ -1,13 +1,15 @@
 const INVERT_TONE = 'invert(1) hue-rotate(180deg)';
 const WHITE = [255, 255, 255, 1];
 const CLEAR = [0, 0, 0, 0];
+const LAUNCHER_LABEL = '切换最新楼层小剧场的亮暗色';
 const MEDIA = 'img, video, canvas, object, embed';
 const INLINE_BLOCKS = 'div, section, article, aside, main, header, footer, details, blockquote, table, p, ul, ol';
-const colorReader = Object.assign(document.createElement('canvas'), { width: 1, height: 1 })
-    .getContext('2d', { willReadFrequently: true });
+let colorReader;
 
 function parseColor(value, cache) {
     if (!cache.has(value)) {
+        colorReader ??= Object.assign(document.createElement('canvas'), { width: 1, height: 1 })
+            .getContext('2d', { willReadFrequently: true });
         colorReader.clearRect(0, 0, 1, 1);
         colorReader.fillStyle = 'transparent';
         colorReader.fillStyle = value;
@@ -188,32 +190,43 @@ function currentFloor() {
     return { key, index, chat, content, message, swipe: message.swipe_id };
 }
 
-function mount() {
-    if (document.getElementById('theater-tone')) return;
-
-    const widget = document.createElement('theater-tone-launcher');
+function createControls() {
+    const widget = document.createElement('div');
     widget.id = 'theater-tone';
-    const shadow = widget.attachShadow({ mode: 'open' });
-    const style = document.createElement('link');
-    style.rel = 'stylesheet';
-    style.href = new URL('./launcher.css', import.meta.url).href;
-    const status = document.createElement('span');
-    status.setAttribute('role', 'status');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.setAttribute('aria-label', '切换最新楼层小剧场的亮暗色');
-    button.setAttribute('aria-pressed', 'false');
-    shadow.append(style, status, button);
-    document.body.append(widget);
+    widget.innerHTML = `
+        <span role="status"></span>
+        <button class="theater-tone-button" type="button" aria-label="${LAUNCHER_LABEL}" aria-pressed="false" title="${LAUNCHER_LABEL}">◐</button>
+    `;
+    const status = widget.querySelector('[role="status"]');
+    const button = widget.querySelector('button');
+
+    const settings = document.createElement('div');
+    settings.id = 'theater-tone-settings';
+    settings.innerHTML = `
+        <div class="inline-drawer">
+            <div class="inline-drawer-toggle inline-drawer-header">
+                <b>小剧场换色</b>
+                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+            </div>
+            <div class="inline-drawer-content">
+                <button type="button" class="menu_button">立即换色</button>
+                <p role="status">已就绪</p>
+            </div>
+        </div>
+    `;
+    const settingsButton = settings.querySelector('button');
+    const settingsStatus = settings.querySelector('[role="status"]');
 
     let active = null;
     let timeout;
     const observer = new MutationObserver(checkFloor);
     const subscribedEvents = new WeakSet();
+    const unsubscribe = [];
 
     function announce(message) {
         clearTimeout(timeout);
         status.textContent = message;
+        settingsStatus.textContent = message || '已就绪';
         if (message) timeout = setTimeout(() => { status.textContent = ''; }, 3600);
     }
 
@@ -224,7 +237,8 @@ function mount() {
         active = null;
         delete widget.dataset.tone;
         button.setAttribute('aria-pressed', 'false');
-        button.title = '切换最新楼层小剧场的亮暗色';
+        button.title = LAUNCHER_LABEL;
+        settingsButton.textContent = '立即换色';
         announce('');
     }
 
@@ -237,8 +251,7 @@ function mount() {
         }
     }
 
-    button.title = '切换最新楼层小剧场的亮暗色';
-    button.addEventListener('click', () => {
+    function toggleTone() {
         checkFloor();
         if (active) {
             reset();
@@ -253,7 +266,8 @@ function mount() {
         }
         const { results, unreadableFrames } = inspect(floor.content);
         if (!results.length) {
-            announce(unreadableFrames ? '最新楼层的前端尚未加载或无法读取' : '最新楼层没有可改色的 HTML');
+            if (floor.content.querySelector('details:not([open])')) announce('先展开最新楼层的小剧场，再点一次');
+            else announce(unreadableFrames ? '最新楼层的前端尚未加载或无法读取' : '最新楼层没有可改色的 HTML');
             return;
         }
 
@@ -277,23 +291,66 @@ function mount() {
         widget.dataset.tone = wasLight ? 'dark' : 'light';
         button.setAttribute('aria-pressed', 'true');
         button.title = '恢复最新楼层原色';
+        settingsButton.textContent = '恢复原色';
         announce(`已切换为${wasLight ? '暗' : '亮'}色系${unreadableFrames ? '（部分前端无法读取）' : ''}`);
-    });
+    }
 
     function subscribeToChatEvents() {
-        const { eventSource, eventTypes } = globalThis.SillyTavern?.getContext?.() ?? {};
-        if (!eventSource?.on || !eventTypes || subscribedEvents.has(eventSource)) return;
+        const { eventSource, eventTypes, event_types } = globalThis.SillyTavern?.getContext?.() ?? {};
+        const types = eventTypes ?? event_types;
+        if (!eventSource?.on || !types || subscribedEvents.has(eventSource)) return;
         subscribedEvents.add(eventSource);
+        const on = (name, handler) => {
+            if (!types[name]) return;
+            eventSource.on(types[name], handler);
+            unsubscribe.push(() => eventSource.off?.(types[name], handler));
+        };
         for (const event of ['CHAT_CHANGED', 'MESSAGE_DELETED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED']) {
-            if (eventTypes[event]) eventSource.on(eventTypes[event], reset);
+            on(event, reset);
         }
         for (const event of ['MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED']) {
-            if (eventTypes[event]) eventSource.on(eventTypes[event], id => {
+            on(event, id => {
                 if (active && Number(id) === active.floor.index) reset();
             });
         }
     }
+
+    button.addEventListener('click', toggleTone);
+    settingsButton.addEventListener('click', toggleTone);
+    return {
+        mount() {
+            if (!widget.isConnected) document.body.append(widget);
+            if (!settings.isConnected) document.getElementById('extensions_settings2')?.append(settings);
+        },
+        dispose() {
+            reset();
+            clearTimeout(timeout);
+            unsubscribe.forEach(off => off());
+            widget.remove();
+            settings.remove();
+        },
+    };
 }
 
-if (document.body) mount();
-else document.addEventListener('DOMContentLoaded', mount, { once: true });
+let controls;
+let deactivated = false;
+
+export function activate() {
+    if (deactivated || !document.body) return;
+    controls ??= createControls();
+    controls.mount();
+}
+
+export function deactivate() {
+    deactivated = true;
+    controls?.dispose();
+    controls = undefined;
+}
+
+const { eventSource, eventTypes, event_types } = globalThis.SillyTavern?.getContext?.() ?? {};
+const types = eventTypes ?? event_types;
+for (const name of ['APP_INITIALIZED', 'APP_READY']) {
+    if (types?.[name]) eventSource?.on(types[name], activate);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', activate, { once: true });
+else activate();
