@@ -1,9 +1,13 @@
-const INVERT_TONE = 'invert(1) hue-rotate(180deg)';
+import { positionLauncher } from './launcher-position.js';
+
 const WHITE = [255, 255, 255, 1];
+const BLACK = [0, 0, 0, 1];
 const CLEAR = [0, 0, 0, 0];
 const LAUNCHER_LABEL = '切换最新楼层小剧场的亮暗色';
 const MEDIA = 'img, video, canvas, object, embed';
 const INLINE_BLOCKS = 'div, section, article, aside, main, header, footer, details, blockquote, table, p, ul, ol';
+const GRADIENT_TOKENS = /url\("(?:[^"\\]|\\.)*"\)|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)|\btransparent\b/gi;
+const LIGHT_LIMIT = 0.215;
 let colorReader;
 
 function parseColor(value, cache) {
@@ -37,12 +41,39 @@ function luminance([r, g, b]) {
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
 }
 
+function mix(from, to, amount) {
+    return from.map((value, i) => value + (to[i] - value) * amount);
+}
+
+function cssColor([r, g, b, alpha]) {
+    return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
+}
+
+function readableColor(color, background) {
+    const base = luminance(background) + 0.05;
+    const ratio = candidate => {
+        const ink = luminance(composite(candidate, background)) + 0.05;
+        return Math.max(ink, base) / Math.min(ink, base);
+    };
+    if (ratio(color) >= 4.5) return color;
+    const endpoint = ratio(WHITE) >= ratio(BLACK) ? WHITE : BLACK;
+    // Find the smallest change toward white or black that keeps text readable.
+    let low = 0;
+    let high = 1;
+    for (let i = 0; i < 8; i++) {
+        const middle = (low + high) / 2;
+        if (ratio(mix(color, endpoint, middle)) < 4.55) low = middle;
+        else high = middle;
+    }
+    return mix(color, endpoint, high);
+}
+
 function getPaint(style, cache) {
     const background = parseColor(style.backgroundColor, cache);
-    if (!style.backgroundImage.includes('gradient(')) return background;
+    if (!style.backgroundImage.includes('gradient(') || style.backgroundClip?.includes('text')) return background;
 
     // Computed CSS expresses gradient stops as color functions or transparent.
-    const stops = style.backgroundImage.match(/(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)|\btransparent\b/gi);
+    const stops = style.backgroundImage.match(GRADIENT_TOKENS)?.filter(stop => !stop.startsWith('url('));
     if (!stops?.length) return background;
     const colors = stops.map(stop => composite(parseColor(stop, cache), background));
     return CLEAR.map((_, i) => colors.reduce((sum, color) => sum + color[i], 0) / colors.length);
@@ -106,11 +137,11 @@ function readTone(element, doc, box, cache) {
                 }
             }
             // The light/dark boundary corresponds to middle gray in sRGB.
-            if (luminance(color) >= 0.215) lightPoints++;
+            if (luminance(color) >= LIGHT_LIMIT) lightPoints++;
         }
     }
 
-    return { element, doc, backdrop, lightShare: lightPoints / (grid * grid), weight: box.area };
+    return { element, doc, lightShare: lightPoints / (grid * grid), weight: box.area };
 }
 
 function inspect(message) {
@@ -158,21 +189,90 @@ function setTemporaryStyle(element, property, value, undo) {
     });
 }
 
-function invertTarget({ element, doc, backdrop }, undo) {
-    const { filter, backgroundColor } = getComputedStyle(element);
-    const color = parseColor(backgroundColor, new Map());
-    if (color[3] < 1) {
-        const [r, g, b] = composite(color, backdrop).map(Math.round);
-        setTemporaryStyle(element, 'background-color', `rgb(${r}, ${g}, ${b})`, undo);
-    }
-    setTemporaryStyle(element, 'filter', filter === 'none' ? INVERT_TONE : `${filter} ${INVERT_TONE}`, undo);
+function readTheme() {
+    const chat = document.getElementById('chat') ?? document.body;
+    const chatStyle = getComputedStyle(chat);
+    const composer = document.getElementById('send_form');
+    const composerStyle = composer && getComputedStyle(composer);
+    const cache = new Map();
+    const variable = name => parseColor(chatStyle.getPropertyValue(`--SmartTheme${name}Color`).trim(), cache);
+    const ui = composite(
+        composerStyle ? getPaint(composerStyle, cache) : CLEAR,
+        composite(variable('BlurTint'), [30, 32, 38, 1]),
+    );
+    const surface = composite(getPaint(chatStyle, cache), ui);
+    const ink = parseColor(chatStyle.color, cache);
+    const quote = variable('Quote');
+    const accent = quote[3] ? composite(quote, ui) : composite(ink, ui);
+    const outline = composerStyle && parseFloat(composerStyle.borderTopWidth) > 0
+        ? parseColor(composerStyle.borderTopColor, cache)
+        : variable('Border');
+    const border = composite(outline, ui);
+    return {
+        ui, ink, accent, border,
+        dark: luminance(surface) < 0.16 ? mix(surface, BLACK, 0.18) : mix([14, 16, 20, 1], surface, 0.18),
+        light: luminance(surface) > 0.55 ? mix(surface, WHITE, 0.17) : mix([250, 249, 247, 1], surface, 0.10),
+    };
+}
 
-    const root = doc?.body ?? element;
-    for (const media of root.querySelectorAll(MEDIA)) {
-        if (media.parentElement?.closest(MEDIA)) continue;
-        const original = root.ownerDocument.defaultView.getComputedStyle(media).filter;
-        setTemporaryStyle(media, 'filter', original === 'none' ? INVERT_TONE : `${original} ${INVERT_TONE}`, undo);
+function paintTarget({ element, doc, lightShare }, theme, wasLight, undo) {
+    const cache = new Map();
+    const root = doc?.documentElement ?? element;
+    const view = root.ownerDocument.defaultView;
+    const flip = (lightShare >= 0.5) === wasLight;
+    const base = theme[wasLight ? 'dark' : 'light'];
+    const colors = new Map();
+    const patches = [];
+    const add = (node, property, value) => patches.push([node, property, value]);
+
+    function shade(color) {
+        const value = luminance(color);
+        const light = (value >= LIGHT_LIMIT) !== flip;
+        const level = flip ? 1 - Math.sqrt(value) : Math.sqrt(value);
+        const surface = light
+            ? mix(theme.light, theme.dark, (1 - level) * 0.16)
+            : mix(theme.dark, theme.light, level * 0.16);
+        return [...surface.slice(0, 3), color[3]];
     }
+
+    if (doc) add(element, 'background-color', cssColor(base));
+    for (const node of [root, ...root.querySelectorAll('*')]) {
+        if (node.namespaceURI !== 'http://www.w3.org/1999/xhtml'
+            || node.closest(`head, script, style, template, ${MEDIA}, iframe`)) continue;
+        const style = view.getComputedStyle(node);
+        const parent = colors.get(node.parentElement);
+        const original = style.color;
+        const text = parseColor(original, cache);
+        const originalBackground = parseColor(style.backgroundColor, cache);
+        const fill = !doc && node === root && !originalBackground[3] ? base : shade(originalBackground);
+        const backgroundColor = cssColor(fill);
+        let backgroundImage = style.backgroundImage;
+        if (backgroundImage.includes('gradient(') && !style.backgroundClip.includes('text')) {
+            backgroundImage = backgroundImage.replace(GRADIENT_TOKENS, token => (
+                token.startsWith('url(') ? token : cssColor(shade(parseColor(token, cache)))
+            ));
+            if (backgroundImage !== style.backgroundImage) add(node, 'background-image', backgroundImage);
+        }
+        if (fill[3]) add(node, 'background-color', backgroundColor);
+        const paint = getPaint({ backgroundColor, backgroundImage, backgroundClip: style.backgroundClip }, cache);
+        const background = composite(paint, parent?.background ?? base);
+        const colorful = Math.max(...text.slice(0, 3)) - Math.min(...text.slice(0, 3)) > 28;
+        const accented = node.matches('a, mark, q') || parent?.accented && original === parent.original
+            || colorful && original !== parent?.original;
+        const color = text[3] ? cssColor(readableColor(accented ? theme.accent : theme.ink, background)) : null;
+        if (color && (color !== parent?.color || original !== parent?.original)) add(node, 'color', color);
+
+        for (const side of ['top', 'right', 'bottom', 'left']) {
+            if (Number.parseFloat(style.getPropertyValue(`border-${side}-width`)) <= 0) continue;
+            const border = parseColor(style.getPropertyValue(`border-${side}-color`), cache);
+            if (!border[3]) continue;
+            const ink = readableColor(theme.accent, background);
+            const blend = mix(background, ink, 0.36);
+            add(node, `border-${side}-color`, cssColor([...blend.slice(0, 3), border[3]]));
+        }
+        colors.set(node, { background, original, accented, color });
+    }
+    for (const [node, property, value] of patches) setTemporaryStyle(node, property, value, undo);
 }
 
 function currentFloor() {
@@ -209,19 +309,72 @@ function createControls() {
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
-                <button type="button" class="menu_button">立即换色</button>
+                <div class="theater-tone-actions">
+                    <button type="button" class="menu_button" data-action="tone">立即换色</button>
+                    <button type="button" class="menu_button" data-action="move">移到左侧</button>
+                    <button type="button" class="menu_button" data-action="reset">重置浮球位置</button>
+                </div>
                 <p role="status">已就绪</p>
             </div>
         </div>
     `;
-    const settingsButton = settings.querySelector('button');
+    const settingsButton = settings.querySelector('[data-action="tone"]');
     const settingsStatus = settings.querySelector('[role="status"]');
 
     let active = null;
     let timeout;
+    let theme;
+    let themeSignature;
+    let themeFrame;
+    let stopPositioning;
     const observer = new MutationObserver(checkFloor);
+    const themeObserver = new MutationObserver(scheduleTheme);
     const subscribedEvents = new WeakSet();
     const unsubscribe = [];
+
+    function restorePaint() {
+        for (const restore of active.paint.reverse()) restore();
+        active.paint.length = 0;
+    }
+
+    function refreshTheme() {
+        const next = readTheme();
+        const signature = JSON.stringify(next);
+        if (signature === themeSignature) return;
+        theme = next;
+        themeSignature = signature;
+        const launcher = mix(theme.ui, theme.accent, 0.17);
+        const border = luminance(launcher) < 0.25 ? WHITE : BLACK;
+        const colors = {
+            surface: theme.ui,
+            ink: readableColor(theme.ink, theme.ui),
+            launcher,
+            'launcher-ink': readableColor(theme.ink, launcher),
+            accent: readableColor(theme.accent, theme.ui),
+            edge: mix(theme.border, border, 0.28),
+            light: theme.light,
+            'light-ink': readableColor(theme.ink, theme.light),
+            dark: theme.dark,
+            'dark-ink': readableColor(theme.ink, theme.dark),
+        };
+        for (const [name, color] of Object.entries(colors)) {
+            widget.style.setProperty(`--theater-tone-${name}`, cssColor(color));
+        }
+        checkFloor();
+        if (active) {
+            restorePaint();
+            for (const target of active.targets) paintTarget(target, theme, active.wasLight, active.paint);
+        }
+    }
+
+    function scheduleTheme() {
+        cancelAnimationFrame(themeFrame);
+        themeFrame = requestAnimationFrame(refreshTheme);
+    }
+
+    function onStylesheetLoad(event) {
+        if (event.target.matches?.('link[rel="stylesheet"]')) scheduleTheme();
+    }
 
     function announce(message) {
         clearTimeout(timeout);
@@ -233,6 +386,7 @@ function createControls() {
     function reset() {
         if (!active) return;
         observer.disconnect();
+        restorePaint();
         for (const restore of active.undo.reverse()) restore();
         active = null;
         delete widget.dataset.tone;
@@ -274,11 +428,12 @@ function createControls() {
         const light = results.reduce((sum, target) => sum + target.lightShare * target.weight, 0);
         const total = results.reduce((sum, target) => sum + target.weight, 0);
         const wasLight = light >= total / 2;
+        refreshTheme();
         subscribeToChatEvents();
-        active = { floor, targets: results, undo: [] };
+        active = { floor, targets: results, wasLight, undo: [], paint: [] };
         observer.observe(floor.chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['mesid', 'src', 'srcdoc'] });
         for (const target of results) {
-            if ((target.lightShare >= 0.5) === wasLight) invertTarget(target, active.undo);
+            paintTarget(target, theme, wasLight, active.paint);
             if (target.doc) {
                 const onLoad = () => {
                     if (getFrameDocument(target.element) !== target.doc) reset();
@@ -321,10 +476,25 @@ function createControls() {
         mount() {
             if (!widget.isConnected) document.body.append(widget);
             if (!settings.isConnected) document.getElementById('extensions_settings2')?.append(settings);
+            if (!stopPositioning) {
+                stopPositioning = positionLauncher(
+                    widget, button, settings.querySelector('[data-action="move"]'), settings.querySelector('[data-action="reset"]'),
+                );
+                const attributes = { attributes: true, attributeFilter: ['class', 'style'] };
+                themeObserver.observe(document.documentElement, attributes);
+                themeObserver.observe(document.body, attributes);
+                themeObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+                document.addEventListener('load', onStylesheetLoad, true);
+            }
+            refreshTheme();
         },
         dispose() {
             reset();
             clearTimeout(timeout);
+            cancelAnimationFrame(themeFrame);
+            themeObserver.disconnect();
+            document.removeEventListener('load', onStylesheetLoad, true);
+            stopPositioning?.();
             unsubscribe.forEach(off => off());
             widget.remove();
             settings.remove();

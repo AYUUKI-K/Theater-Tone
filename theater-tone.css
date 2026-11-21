@@ -1,30 +1,22 @@
 #theater-tone {
-    --theater-tone-diameter: 46px;
-    --theater-tone-bottom-space: 152px;
-    display: flex !important;
+    --theater-tone-diameter: 44px;
+    --theater-tone-inset-top: env(safe-area-inset-top, 0px);
+    --theater-tone-inset-right: env(safe-area-inset-right, 0px);
+    --theater-tone-inset-bottom: env(safe-area-inset-bottom, 0px);
+    --theater-tone-inset-left: env(safe-area-inset-left, 0px);
+    display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
     position: fixed !important;
-    right: max(16px, calc(env(safe-area-inset-right, 0px) + 8px)) !important;
+    left: var(--theater-tone-left, calc(100vw - var(--theater-tone-diameter) - 10px)) !important;
+    right: auto !important;
     /* SillyTavern's transformed html can give fixed elements a zero-height containing block. */
-    top: calc(100vh - var(--theater-tone-bottom-space) - var(--theater-tone-diameter) - env(safe-area-inset-bottom, 0px)) !important;
-    top: calc(100dvh - var(--theater-tone-bottom-space) - var(--theater-tone-diameter) - env(safe-area-inset-bottom, 0px)) !important;
+    top: var(--theater-tone-top, calc(100vh - var(--theater-tone-diameter) - 152px)) !important;
     bottom: auto !important;
     z-index: 2147483000 !important;
-    align-items: center !important;
+    width: var(--theater-tone-diameter) !important;
     height: var(--theater-tone-diameter) !important;
-    gap: 8px !important;
     pointer-events: none !important;
-}
-
-@media (max-width: 680px), (pointer: coarse) {
-    #theater-tone {
-        --theater-tone-bottom-space: clamp(96px, 21vh, 172px);
-    }
-
-    @supports (height: 100dvh) {
-        #theater-tone { --theater-tone-bottom-space: clamp(96px, 21dvh, 172px); }
-    }
 }
 
 #theater-tone > .theater-tone-button {
@@ -32,44 +24,72 @@
     visibility: visible !important;
     opacity: 1 !important;
     place-items: center;
-    flex: 0 0 var(--theater-tone-diameter);
     width: var(--theater-tone-diameter) !important;
     height: var(--theater-tone-diameter) !important;
     margin: 0;
     padding: 0;
-    border: 2px solid #f3eeff;
+    border: 1px solid var(--theater-tone-edge, var(--SmartThemeBorderColor, #746d80));
     border-radius: 50%;
-    background: #a894f7;
-    color: #23193c;
-    font: 26px/1 system-ui, sans-serif;
+    background: var(--theater-tone-launcher, var(--SmartThemeBlurTintColor, #25283a));
+    color: var(--theater-tone-launcher-ink, var(--SmartThemeBodyColor, #faf4e9));
+    font: 23px/1 system-ui, sans-serif;
     text-shadow: none;
-    box-shadow: 0 0 0 1px #2f2355, 0 3px 12px #0e0a1a88;
-    cursor: pointer;
+    box-shadow: 0 2px 7px #0005;
+    cursor: grab;
     pointer-events: auto;
-    touch-action: manipulation;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-#theater-tone[data-tone="light"] > button { background: #f7ebd7; }
-#theater-tone[data-tone="dark"] > button { background: #30264b; color: #f3eeff; }
+#theater-tone[data-tone="light"] > button {
+    background: var(--theater-tone-light);
+    color: var(--theater-tone-light-ink);
+}
+
+#theater-tone[data-tone="dark"] > button {
+    background: var(--theater-tone-dark);
+    color: var(--theater-tone-dark-ink);
+}
+
+#theater-tone[data-dragging] > button { cursor: grabbing; }
 
 #theater-tone > button:focus-visible {
-    outline: 2px solid #ead9ff;
+    outline: 2px solid var(--theater-tone-accent, currentColor);
     outline-offset: 3px;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-    #theater-tone > button:active { transform: scale(.94); }
+    #theater-tone:not([data-dragging]) > button:active { transform: scale(.94); }
 }
 
-#theater-tone > [role="status"]:empty { display: none; }
+#theater-tone > [role="status"]:empty,
+#theater-tone[data-dragging] > [role="status"] { display: none; }
 
 #theater-tone > [role="status"] {
-    max-width: min(15rem, calc(100vw - 90px));
+    position: absolute;
+    top: 50%;
+    right: calc(100% + 8px);
+    transform: translateY(-50%);
+    width: max-content;
+    max-width: min(14rem, calc(100vw - 80px));
     padding: 6px 10px;
     border-radius: 8px;
-    background: #25283a;
-    color: #faf4e9;
-    box-shadow: 0 2px 10px #11132170;
-    font: 14px/1.4 system-ui, sans-serif;
+    background: var(--theater-tone-surface, var(--SmartThemeBlurTintColor, #25283a));
+    color: var(--theater-tone-ink, var(--SmartThemeBodyColor, #faf4e9));
+    border: 1px solid var(--theater-tone-edge, var(--SmartThemeBorderColor, #746d80));
+    box-shadow: 0 2px 7px #0005;
+    font: 14px/1.4 var(--mainFontFamily, system-ui), sans-serif;
     overflow-wrap: anywhere;
+}
+
+#theater-tone[data-side="left"] > [role="status"] {
+    right: auto;
+    left: calc(100% + 8px);
+}
+
+#theater-tone-settings .theater-tone-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
 }
