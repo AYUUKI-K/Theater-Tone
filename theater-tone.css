@@ -19,11 +19,12 @@
     pointer-events: none !important;
 }
 
-#theater-tone > .theater-tone-button {
+#theater-tone > :is(.theater-tone-button, .theater-tone-tab) {
     display: grid !important;
     visibility: visible !important;
     opacity: 1 !important;
     place-items: center;
+    box-sizing: border-box;
     width: var(--theater-tone-diameter) !important;
     height: var(--theater-tone-diameter) !important;
     margin: 0;
@@ -40,6 +41,44 @@
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
+}
+
+#theater-tone > .theater-tone-tab {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 24px !important;
+    border-right: 0;
+    border-radius: 12px 0 0 12px;
+    box-shadow: none;
+    cursor: pointer;
+    touch-action: pan-y pinch-zoom;
+}
+
+#theater-tone > .theater-tone-tab::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-top: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+    transform: rotate(-135deg);
+}
+
+#theater-tone[data-side="left"] > .theater-tone-tab {
+    left: 0;
+    right: auto;
+    border-right: 1px solid var(--theater-tone-edge, var(--SmartThemeBorderColor, #746d80));
+    border-left: 0;
+    border-radius: 0 12px 12px 0;
+}
+
+#theater-tone[data-side="left"] > .theater-tone-tab::before {
+    transform: rotate(45deg);
+}
+
+#theater-tone:not([data-stowed]) > .theater-tone-tab,
+#theater-tone[data-stowed] > .theater-tone-button {
+    display: none !important;
 }
 
 #theater-tone[data-tone="light"] > button {
@@ -60,10 +99,11 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-    #theater-tone:not([data-dragging]) > button:active { transform: scale(.94); }
+    #theater-tone:not([data-dragging]) > .theater-tone-button:active { transform: scale(.94); }
 }
 
 #theater-tone > [role="status"]:empty,
+#theater-tone[data-stowed] > [role="status"],
 #theater-tone[data-dragging] > [role="status"] { display: none; }
 
 #theater-tone > [role="status"] {

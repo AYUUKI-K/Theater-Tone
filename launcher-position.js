@@ -2,6 +2,7 @@ const STORAGE_KEY = 'theater-tone:launcher-position';
 const DEFAULT_POSITION = { side: 'right', ratio: null };
 const DRAG_DISTANCE = 7;
 const EDGE_GAP = 10;
+const STOW_DELAY = 4000;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 function readPosition() {
@@ -16,7 +17,7 @@ function readPosition() {
     return { ...DEFAULT_POSITION };
 }
 
-export function positionLauncher(widget, button, moveButton, resetButton) {
+export function positionLauncher({ widget, button, tab, moveButton, resetButton }) {
     const events = new AbortController();
     const { signal } = events;
     const view = window.visualViewport;
@@ -24,11 +25,12 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
     let drag;
     let skipClick = false;
     let frame;
+    let stowTimer;
 
     function bounds() {
         const style = getComputedStyle(widget);
         const inset = side => Number.parseFloat(style.getPropertyValue(`--theater-tone-inset-${side}`)) || 0;
-        const diameter = button.offsetWidth || 44;
+        const diameter = widget.offsetWidth || 44;
         const offsetX = view?.offsetLeft ?? 0;
         const offsetY = view?.offsetTop ?? 0;
         const width = view?.width ?? window.innerWidth;
@@ -38,9 +40,14 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
         const top = Math.max(offsetY + Math.max(EDGE_GAP, inset('top')), topBar?.bottom ?? 0);
         const bottom = Math.min(offsetY + height - inset('bottom'), composer?.height ? composer.top : Infinity);
         const left = offsetX + Math.max(EDGE_GAP, inset('left'));
+        const stowedLeft = offsetX + inset('left');
         return {
             left,
             right: Math.max(left, offsetX + width - diameter - Math.max(EDGE_GAP, inset('right'))),
+            stowed: {
+                left: stowedLeft,
+                right: Math.max(stowedLeft, offsetX + width - diameter - inset('right')),
+            },
             top: Math.min(top + EDGE_GAP, Math.max(offsetY, bottom - diameter - EDGE_GAP)),
             bottom: Math.max(offsetY, bottom - diameter - EDGE_GAP),
         };
@@ -58,13 +65,28 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
         const y = position.ratio === null
             ? Math.max(area.top, area.bottom - 66)
             : area.top + (area.bottom - area.top) * position.ratio;
-        place(area[position.side], y, position.side);
+        const horizontal = widget.hasAttribute('data-stowed') ? area.stowed : area;
+        place(horizontal[position.side], y, position.side);
         moveButton.textContent = position.side === 'left' ? '移到右侧' : '移到左侧';
     }
 
     function schedule() {
         cancelAnimationFrame(frame);
         frame = requestAnimationFrame(layout);
+    }
+
+    function setStowed(stowed) {
+        clearTimeout(stowTimer);
+        widget.toggleAttribute('data-stowed', stowed);
+        layout();
+    }
+
+    function scheduleStow() {
+        clearTimeout(stowTimer);
+        if (widget.hasAttribute('data-stowed') || drag) return;
+        stowTimer = setTimeout(() => {
+            if (!button.matches(':focus-visible')) setStowed(true);
+        }, STOW_DELAY);
     }
 
     function save() {
@@ -74,7 +96,6 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
         } catch {
             // Keeping the placement in memory is sufficient for the current page.
         }
-        layout();
     }
 
     function move(event) {
@@ -95,10 +116,14 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
         const previous = drag;
         drag = undefined;
         delete widget.dataset.dragging;
-        if (!previous.moved) return;
+        if (!previous.moved) {
+            scheduleStow();
+            return;
+        }
         skipClick = true;
         if (event.type !== 'pointerup') {
             layout();
+            scheduleStow();
             return;
         }
         const { left, right, top, bottom } = previous.area;
@@ -107,10 +132,30 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
             ratio: (previous.y - top) / Math.max(1, bottom - top),
         };
         save();
+        setStowed(true);
     }
 
+    tab.addEventListener('click', event => {
+        setStowed(false);
+        if (!event.detail) button.focus({ preventScroll: true });
+        scheduleStow();
+    }, { signal });
+    document.addEventListener('pointerdown', event => {
+        if (!drag && !widget.hasAttribute('data-stowed') && !widget.contains(event.target)) {
+            setStowed(true);
+        }
+    }, { capture: true, signal });
+    button.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setStowed(true);
+        tab.focus({ preventScroll: true });
+    }, { signal });
+    button.addEventListener('blur', scheduleStow, { signal });
     button.addEventListener('pointerdown', event => {
         if (drag || !event.isPrimary || event.button !== 0) return;
+        clearTimeout(stowTimer);
         skipClick = false;
         const { left, top } = widget.getBoundingClientRect();
         drag = {
@@ -127,10 +172,13 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
         button.addEventListener(event, end, { signal });
     }
     button.addEventListener('click', event => {
-        if (!skipClick || !event.detail) return;
-        skipClick = false;
-        event.preventDefault();
-        event.stopImmediatePropagation();
+        if (widget.hasAttribute('data-stowed') || (skipClick && event.detail)) {
+            skipClick = false;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+        }
+        scheduleStow();
     }, { capture: true, signal });
     moveButton.addEventListener('click', () => {
         const area = bounds();
@@ -140,16 +188,18 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
             ratio: clamp((y - area.top) / Math.max(1, area.bottom - area.top), 0, 1),
         };
         save();
+        layout();
     }, { signal });
     resetButton.addEventListener('click', () => {
         position = { ...DEFAULT_POSITION };
         save();
+        layout();
     }, { signal });
     window.addEventListener('resize', schedule, { signal });
     view?.addEventListener('resize', schedule, { signal });
     view?.addEventListener('scroll', schedule, { signal });
     const resize = new ResizeObserver(schedule);
-    resize.observe(button);
+    resize.observe(widget);
     for (const id of ['top-bar', 'form_sheld']) {
         const element = document.getElementById(id);
         if (element) resize.observe(element);
@@ -159,5 +209,6 @@ export function positionLauncher(widget, button, moveButton, resetButton) {
         events.abort();
         resize.disconnect();
         cancelAnimationFrame(frame);
+        clearTimeout(stowTimer);
     };
 }

@@ -293,9 +293,12 @@ function currentFloor() {
 function createControls() {
     const widget = document.createElement('div');
     widget.id = 'theater-tone';
+    widget.dataset.stowed = '';
+    widget.dataset.side = 'right';
     widget.innerHTML = `
         <span role="status"></span>
         <button class="theater-tone-button" type="button" aria-label="${LAUNCHER_LABEL}" aria-pressed="false" title="${LAUNCHER_LABEL}">◐</button>
+        <button class="theater-tone-tab" type="button" aria-label="展开小剧场换色浮球" title="展开小剧场换色浮球"></button>
     `;
     const status = widget.querySelector('[role="status"]');
     const button = widget.querySelector('button');
@@ -477,9 +480,13 @@ function createControls() {
             if (!widget.isConnected) document.body.append(widget);
             if (!settings.isConnected) document.getElementById('extensions_settings2')?.append(settings);
             if (!stopPositioning) {
-                stopPositioning = positionLauncher(
-                    widget, button, settings.querySelector('[data-action="move"]'), settings.querySelector('[data-action="reset"]'),
-                );
+                stopPositioning = positionLauncher({
+                    widget,
+                    button,
+                    tab: widget.querySelector('.theater-tone-tab'),
+                    moveButton: settings.querySelector('[data-action="move"]'),
+                    resetButton: settings.querySelector('[data-action="reset"]'),
+                });
                 const attributes = { attributes: true, attributeFilter: ['class', 'style'] };
                 themeObserver.observe(document.documentElement, attributes);
                 themeObserver.observe(document.body, attributes);
