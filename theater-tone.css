@@ -132,4 +132,16 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    writing-mode: horizontal-tb;
+}
+
+#theater-tone-settings .theater-tone-actions > button {
+    flex: 0 0 auto;
+    width: max-content;
+    max-width: 100%;
+    min-height: 36px;
+    margin: 0;
+    padding: 6px 10px;
+    writing-mode: horizontal-tb;
+    white-space: nowrap;
 }
